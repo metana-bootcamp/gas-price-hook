@@ -29,6 +29,7 @@ import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {GasPriceHook} from "src/GasPriceHook.sol";
+import {console} from "forge-std/console.sol";
 
 contract GasPriceHooktest is Test, Deployers {
     using StateLibrary for IPoolManager;
@@ -72,7 +73,7 @@ contract GasPriceHooktest is Test, Deployers {
         // adding liquidity
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifiyLiquidityParams({
+            IPoolManager.ModifyLiquidityParams({
                 tickLower: -60,
                 tickUpper: 60,
                 liquidityDelta: 100 ether,
@@ -84,17 +85,80 @@ contract GasPriceHooktest is Test, Deployers {
 
     function test_feeUpdatesWithGasPrice() public {
         // setup swap params
+        PoolSwapTest.TestSettings memory testSetings = PoolSwapTest
+            .TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: true,
+            amountSpecified: -0.00001 ether,
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+
+        // current gas price is 10 gwei
+        // moving average will also be 10 gwei
+        uint128 gasprice = uint128(tx.gasprice);
+        uint128 movingAverageGasPrice = hook.movingAverageGasPrice();
+        uint128 movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(gasprice, 10 gwei);
+        assertEq(movingAverageGasPrice, 10 gwei);
+        assertEq(movingAverageGasPriceCount, 1);
 
         // 1. swap with gasprice = 10 gwei
- 
+        // This should just use the `BASE_FEE` since the gas price is same as current average
+        uint256 balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSetings, ZERO_BYTES);
+        uint256 balanceOfToken1After = currency1.balanceOfSelf();
+        uint256 outpuFromBaseFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
+
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // moving average should not change, only moving average count will be incremented
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(movingAverageGasPrice, 10 gwei);
+        assertEq(movingAverageGasPriceCount, 2);
+
+        // swap at lower gas price
         // 2. swap with gas price = 4 gwei
         vm.txGasPrice(4 gwei);
+        balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSetings, ZERO_BYTES);
+        balanceOfToken1After = currency1.balanceOfSelf();
+        uint256 outpuFromIncreasedBaseFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
 
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // moving average (10 + 10 + 4) / 3 = 8 gwei
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(movingAverageGasPrice, 8 gwei);
+        assertEq(movingAverageGasPriceCount, 3);
+
+        // gas price is higher comparatively
         // 3. swap with gas price = 12 gwei
         vm.txGasPrice(12 gwei);
+        balanceOfToken1Before = currency1.balanceOfSelf();
+        swapRouter.swap(key, params, testSetings, ZERO_BYTES);
+        balanceOfToken1After = currency1.balanceOfSelf();
+        uint256 outpuFromDecreasedBaseFeeSwap = balanceOfToken1After -
+            balanceOfToken1Before;
 
-        // assert
+        assertGt(balanceOfToken1After, balanceOfToken1Before);
+
+        // moving average (10 + 10 + 4 + 12) / 4 = 9 gwei
+        movingAverageGasPrice = hook.movingAverageGasPrice();
+        movingAverageGasPriceCount = hook.movingAverageGasPriceCount();
+        assertEq(movingAverageGasPrice, 9 gwei);
+        assertEq(movingAverageGasPriceCount, 4);
+
+        // 4. check all amounts
+        console.log("Base Fee Output ", outpuFromBaseFeeSwap);
+        console.log("Increased Fee Output ", outpuFromIncreasedBaseFeeSwap);
+        console.log("Decreased Fee Output ", outpuFromDecreasedBaseFeeSwap);
+
+        assertGt(outpuFromDecreasedBaseFeeSwap, outpuFromBaseFeeSwap);
+        assertGt(outpuFromBaseFeeSwap, outpuFromIncreasedBaseFeeSwap);
     }
-
-
 }

@@ -28,7 +28,7 @@ contract GasPriceHook is BaseHook {
     using LPFeeLibrary for uint24;
 
     // keep track of the moving average gas price
-    uint128 movingAverageGasPrice;
+    uint128 public movingAverageGasPrice;
 
     // num of times the moving average is updated
     // need this as the denominator to update it next time based on moving average formulae
